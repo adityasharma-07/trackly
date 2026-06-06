@@ -76,16 +76,26 @@
     };
   }
 
-  /* Fetch initial state over REST before WS connects, so first render has data */
-  fetch("/api/state")
-    .then((r) => r.json())
-    .then((data) => {
-      _snap = { ..._snap, ...data };
-      if (data.zones) buildTables(data.zones);
-      _emit();
-    })
-    .catch(() => {/* server not ready yet — WS will supply state */})
-    .finally(() => _connect());
+  /* Fetch initial state over REST, then open WebSocket */
+  function _fetchState() {
+    return fetch("/api/state")
+      .then((r) => r.json())
+      .then((data) => {
+        _snap = { ..._snap, ...data };
+        if (data.zones && data.zones.length > 0) buildTables(data.zones);
+        _emit();
+      })
+      .catch(() => {/* server not ready yet */});
+  }
+
+  _fetchState().finally(() => _connect());
+
+  /* Polling fallback — re-syncs every 3s in case a WS message was missed */
+  setInterval(() => {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) {
+      _fetchState();
+    }
+  }, 3000);
 
   /* ---- analytics accessor (reads live _snap) ---- */
   const HOUR_LABELS = [];

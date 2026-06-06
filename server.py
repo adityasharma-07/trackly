@@ -40,6 +40,7 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 
 _latest_raw: bytes = b""    # raw MJPEG frame bytes
 _latest_frame: np.ndarray | None = None  # latest raw numpy frame
+_cached_dets: list = []     # latest YOLO detections (shared with MJPEG generator)
 
 _zones: list = []           # live zone dicts (with detection state)
 _running: bool = True       # detection on/off
@@ -151,7 +152,7 @@ def _load_zones():
     _zones = [
         {"id": d["id"], "name": d["name"], "cap": d["cap"],
          "x": d["x"], "y": d["y"], "w": d["w"], "h": d["h"],
-         "status": "unknown", "people": 0, "conf": 0.0,
+         "status": "available", "people": 0, "conf": 0.0,
          "_in_since": None, "_out_since": None,
          "_since_ms": int(time.time() * 1000)}
         for d in raw.get("zones", [])
@@ -214,9 +215,8 @@ def _detection_loop():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
     print("[server] Camera ready — open http://localhost:8000")
 
-    last_detect   = 0.0
+    last_detect    = 0.0
     last_broadcast = 0.0
-    cached_dets: list = []
 
     while True:
         ret, frame = cap.read()
@@ -242,15 +242,17 @@ def _detection_loop():
 
             results = model(frame, classes=[PERSON_CLASS],
                             conf=CONF_THRESH, verbose=False, device="cpu")
-            cached_dets = [
+            new_dets = [
                 {"box": tuple(map(int, b.xyxy[0])), "conf": float(b.conf[0])}
                 for r in results for b in r.boxes
             ]
 
             with _lock:
+                global _cached_dets
+                _cached_dets = new_dets
                 for z in current_zones:
                     zr = _zone_px(z)
-                    here = [d for d in cached_dets if _rects_overlap(*d["box"], *zr)]
+                    here = [d for d in new_dets if _rects_overlap(*d["box"], *zr)]
                     _update_zone(z, here, now)
                 _tick_analytics(current_zones)
                 _updated_at = int(now * 1000)
@@ -298,9 +300,9 @@ async def _mjpeg_annotated():
         with _lock:
             frame = _latest_frame
             zones = [z.copy() for z in _zones]
-            dets  = []  # detections already baked via cached_dets in thread
+            dets  = list(_cached_dets)
         if frame is not None:
-            ann = _annotate(frame, [], zones)  # annotation only, no det boxes (already in feed)
+            ann = _annotate(frame, dets, zones)
             _, buf = cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 80])
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
         await asyncio.sleep(0.04)
@@ -362,7 +364,7 @@ async def post_zones(payload: _ZonePayload):
                 new_list.append({
                     "id": d["id"], "name": d["name"], "cap": d["cap"],
                     "x": d["x"], "y": d["y"], "w": d["w"], "h": d["h"],
-                    "status": "unknown", "people": 0, "conf": 0.0,
+                    "status": "available", "people": 0, "conf": 0.0,
                     "_in_since": None, "_out_since": None,
                     "_since_ms": int(time.time() * 1000),
                 })
