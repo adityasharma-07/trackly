@@ -288,7 +288,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.on_event("startup")
 async def _startup():
     global _event_loop
-    _event_loop = asyncio.get_event_loop()
+    _event_loop = asyncio.get_running_loop()   # get_event_loop() is unreliable in Python 3.10+
     _load_zones()
     t = threading.Thread(target=_detection_loop, daemon=True)
     t.start()

@@ -90,12 +90,8 @@
 
   _fetchState().finally(() => _connect());
 
-  /* Polling fallback — re-syncs every 3s in case a WS message was missed */
-  setInterval(() => {
-    if (!_ws || _ws.readyState !== WebSocket.OPEN) {
-      _fetchState();
-    }
-  }, 3000);
+  /* Always-on polling — re-syncs every 1s to guarantee UI stays current */
+  setInterval(_fetchState, 1000);
 
   /* ---- analytics accessor (reads live _snap) ---- */
   const HOUR_LABELS = [];
